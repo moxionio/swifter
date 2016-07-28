@@ -8,9 +8,44 @@
 import Foundation
 
 
+public protocol WebSocketHandler {
+    func sessionConnected(session: WebSocketSession)
+    func sessionClosed(session: WebSocketSession, error: Error?)
+    func session(session: WebSocketSession, receivedText: String)
+    func session(session: WebSocketSession, receivedBinary: [UInt8])
+}
+
+public struct DefaultWebSocketHandler: WebSocketHandler {
+    var connected: ((WebSocketSession) -> Void)?
+    var closed: ((WebSocketSession) -> Void)?
+    var handleText: ((WebSocketSession, String) -> Void)?
+    var handleBinary: ((WebSocketSession, [UInt8]) -> Void)?
+    
+    public func sessionConnected(session: WebSocketSession) {
+        connected?(session)
+    }
+    
+    public func sessionClosed(session: WebSocketSession, error: Error?) {
+        closed?(session)
+    }
+    
+    public func session(session: WebSocketSession, receivedText text: String) {
+        handleText?(session, text)
+    }
+    
+    public func session(session: WebSocketSession, receivedBinary binary: [UInt8]) {
+        handleBinary?(session, binary)
+    }
+}
+
 public func websocket(
-      _ text: ((WebSocketSession, String) -> Void)?,
-    _ binary: ((WebSocketSession, [UInt8]) -> Void)?) -> ((HttpRequest) -> HttpResponse) {
+    _ text: ((WebSocketSession, String) -> Void)?,
+    _ binary: ((WebSocketSession, [UInt8]) -> Void)? = nil) -> ((HttpRequest) -> HttpResponse) {
+    let handler = DefaultWebSocketHandler(connected: nil, closed: nil, handleText: text, handleBinary: binary)
+    return websocket(handler: handler)
+}
+
+public func websocket(handler: WebSocketHandler) -> ((HttpRequest) -> HttpResponse) {
     return { r in
         guard r.hasTokenForHeader("upgrade", token: "websocket") else {
             return .badRequest(.text("Invalid value of 'Upgrade' header: \(r.headers["upgrade"])"))
@@ -26,37 +61,34 @@ public func websocket(
             var fragmentedOpCode = WebSocketSession.OpCode.close
             var payload = [UInt8]() // Used for fragmented frames.
             
+            handler.sessionConnected(session: session)
             func handleTextPayload(_ frame: WebSocketSession.Frame) throws {
-                if let handleText = text {
-                    if frame.fin {
-                        if payload.count > 0 {
-                            throw WebSocketSession.WsError.protocolError("Continuing fragmented frame cannot have an operation code.")
-                        }
-                        var textFramePayload = frame.payload.map { Int8(bitPattern: $0) }
-                        textFramePayload.append(0)
-                        if let text = String(validatingUTF8: textFramePayload) {
-                            handleText(session, text)
-                        } else {
-                            throw WebSocketSession.WsError.invalidUTF8("")
-                        }
-                    } else {
-                        payload.append(contentsOf: frame.payload)
-                        fragmentedOpCode = .text
+                if frame.fin {
+                    if payload.count > 0 {
+                        throw WebSocketSession.WsError.protocolError("Continuing fragmented frame cannot have an operation code.")
                     }
+                    var textFramePayload = frame.payload.map { Int8(bitPattern: $0) }
+                    textFramePayload.append(0)
+                    if let text = String(validatingUTF8: textFramePayload) {
+                        handler.session(session: session, receivedText: text)
+                    } else {
+                        throw WebSocketSession.WsError.invalidUTF8("")
+                    }
+                } else {
+                    payload.append(contentsOf: frame.payload)
+                    fragmentedOpCode = .text
                 }
             }
             
             func handleBinaryPayload(_ frame: WebSocketSession.Frame) throws {
-                if let handleBinary = binary {
-                    if frame.fin {
-                        if payload.count > 0 {
-                            throw WebSocketSession.WsError.protocolError("Continuing fragmented frame cannot have an operation code.")
-                        }
-                        handleBinary(session, frame.payload)
-                    } else {
-                        payload.append(contentsOf: frame.payload)
-                        fragmentedOpCode = .binary
+                if frame.fin {
+                    if payload.count > 0 {
+                        throw WebSocketSession.WsError.protocolError("Continuing fragmented frame cannot have an operation code.")
                     }
+                    handler.session(session: session, receivedBinary: frame.payload)
+                } else {
+                    payload.append(contentsOf: frame.payload)
+                    fragmentedOpCode = .binary
                 }
             }
             
@@ -102,6 +134,7 @@ public func websocket(
                     connect = try handleOperationCode(frame)
                 }
                 session.writeCloseFrame()
+                handler.sessionClosed(session: session, error: nil)
             } catch let error {
                 switch error {
                 case WebSocketSession.WsError.unknownOpCode:
@@ -117,6 +150,7 @@ public func websocket(
                 }
                 // If an error occurs, send the close handshake.
                 session.writeCloseFrame()
+                handler.sessionClosed(session: session, error: error)
             }
         }
         guard let secWebSocketAccept = String.toBase64((secWebSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").sha1()) else {
