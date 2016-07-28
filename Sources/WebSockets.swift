@@ -60,7 +60,7 @@ public func websocket(
                 }
             }
             
-            func handleOperationCode(_ frame: WebSocketSession.Frame) throws {
+            func handleOperationCode(_ frame: WebSocketSession.Frame) throws -> Bool {
                 switch frame.opcode {
                 case .continue:
                     // There is no message to continue, failed immediatelly.
@@ -76,13 +76,13 @@ public func websocket(
                         // Reset the OpCode.
                         fragmentedOpCode = WebSocketSession.OpCode.close
                     }
-                    try handleOperationCode(frame)
+                    return try handleOperationCode(frame)
                 case .text:
                     try handleTextPayload(frame)
                 case .binary:
                     try handleBinaryPayload(frame)
                 case .close:
-                    throw WebSocketSession.Control.close
+                    return false
                 case .ping:
                     if frame.payload.count > 125 {
                         throw WebSocketSession.WsError.protocolError("Payload gretter than 125 octets.")
@@ -92,18 +92,18 @@ public func websocket(
                 case .pong:
                     break
                 }
+                return true
             }
             
             do {
-                while true {
+                var connect = true
+                while connect {
                     let frame = try session.readFrame()
-                    try handleOperationCode(frame)
+                    connect = try handleOperationCode(frame)
                 }
+                session.writeCloseFrame()
             } catch let error {
                 switch error {
-                case WebSocketSession.Control.close:
-                    // Normal close
-                    break
                 case WebSocketSession.WsError.unknownOpCode:
                     print("Unknown Op Code: \(error)")
                 case WebSocketSession.WsError.unMaskedFrame:
@@ -131,7 +131,6 @@ public class WebSocketSession: Hashable, Equatable  {
     
     public enum WsError: Error { case unknownOpCode(String), unMaskedFrame(String), protocolError(String), invalidUTF8(String) }
     public enum OpCode: UInt8 { case `continue` = 0x00, close = 0x08, ping = 0x09, pong = 0x0A, text = 0x01, binary = 0x02 }
-    public enum Control: Error { case close }
     
     public class Frame {
         public var opcode = OpCode.close
