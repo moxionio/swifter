@@ -176,9 +176,9 @@ public func demoServer(_ publicDir: String) -> HttpServer {
     }
     
     server["/websocket-echo"] = websocket({ (session, text) in
-        session.writeText(text)
+        _ = try? session.writeText(text)
         }, { (session, binary) in
-        session.writeBinary(binary)
+        _ = try? session.writeBinary(binary)
     })
     
     server.notFoundHandler = { r in

@@ -119,7 +119,7 @@ public func websocket(handler: WebSocketHandler) -> ((HttpRequest) -> HttpRespon
                     if frame.payload.count > 125 {
                         throw WebSocketSession.WsError.protocolError("Payload gretter than 125 octets.")
                     } else {
-                        session.writeFrame(ArraySlice(frame.payload), .pong)
+                        try session.writeFrame(ArraySlice(frame.payload), .pong)
                     }
                 case .pong:
                     break
@@ -133,7 +133,7 @@ public func websocket(handler: WebSocketHandler) -> ((HttpRequest) -> HttpRespon
                     let frame = try session.readFrame()
                     connect = try handleOperationCode(frame)
                 }
-                session.writeCloseFrame()
+                try session.writeCloseFrame()
                 handler.sessionClosed(session: session, error: nil)
             } catch let error {
                 switch error {
@@ -149,7 +149,7 @@ public func websocket(handler: WebSocketHandler) -> ((HttpRequest) -> HttpRespon
                     print("Unkown error \(error)")
                 }
                 // If an error occurs, send the close handshake.
-                session.writeCloseFrame()
+                _ = try? session.writeCloseFrame()
                 handler.sessionClosed(session: session, error: error)
             }
         }
@@ -182,36 +182,32 @@ public class WebSocketSession: Hashable, Equatable  {
     }
     
     deinit {
-        writeCloseFrame()
+        _ = try? writeCloseFrame()
         socket.close()
     }
     
-    public func writeText(_ text: String) -> Void {
-        self.writeFrame(ArraySlice(text.utf8), OpCode.text)
+    public func writeText(_ text: String) throws -> Void {
+        try self.writeFrame(ArraySlice(text.utf8), OpCode.text)
     }
 
-    public func writeBinary(_ binary: [UInt8]) -> Void {
-        self.writeBinary(ArraySlice(binary))
+    public func writeBinary(_ binary: [UInt8]) throws -> Void {
+        try self.writeBinary(ArraySlice(binary))
     }
     
-    public func writeBinary(_ binary: ArraySlice<UInt8>) -> Void {
-        self.writeFrame(binary, OpCode.binary)
+    public func writeBinary(_ binary: ArraySlice<UInt8>) throws -> Void {
+        try self.writeFrame(binary, OpCode.binary)
     }
     
-    public func writeFrame(_ data: ArraySlice<UInt8>, _ op: OpCode, _ fin: Bool = true) {
+    public func writeFrame(_ data: ArraySlice<UInt8>, _ op: OpCode, _ fin: Bool = true) throws {
         let finAndOpCode = UInt8(fin ? 0x80 : 0x00) | op.rawValue
         let maskAndLngth = encodeLengthAndMaskFlag(UInt64(data.count), false)
-        do {
-            try self.socket.writeUInt8([finAndOpCode])
-            try self.socket.writeUInt8(maskAndLngth)
-            try self.socket.writeUInt8(data)
-        } catch {
-            print(error)
-        }
+        try self.socket.writeUInt8([finAndOpCode])
+        try self.socket.writeUInt8(maskAndLngth)
+        try self.socket.writeUInt8(data)
     }
     
-    public func writeCloseFrame() {
-        writeFrame(ArraySlice("".utf8), .close)
+    public func writeCloseFrame() throws {
+        try writeFrame(ArraySlice("".utf8), .close)
     }
     
     private func encodeLengthAndMaskFlag(_ len: UInt64, _ masked: Bool) -> [UInt8] {
