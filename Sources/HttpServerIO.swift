@@ -44,16 +44,6 @@ public class HttpServerIO {
 
     public var operating: Bool { get { return self.state == .running } }
 
-    /// String representation of the IPv4 address to receive requests from.
-    /// It's only used when the server is started with `forceIPv4` option set to true.
-    /// Otherwise, `listenAddressIPv6` will be used.
-    public var listenAddressIPv4: String?
-
-    /// String representation of the IPv6 address to receive requests from.
-    /// It's only used when the server is started with `forceIPv4` option set to false.
-    /// Otherwise, `listenAddressIPv4` will be used.
-    public var listenAddressIPv6: String?
-
     private let queue = DispatchQueue(label: "swifter.httpserverio.clientsockets")
 
     public func port() throws -> Int {
@@ -69,12 +59,11 @@ public class HttpServerIO {
     }
 
     @available(macOS 10.10, *)
-    public func start(_ port: in_port_t = 8080, forceIPv4: Bool = false, priority: DispatchQoS.QoSClass = DispatchQoS.QoSClass.background) throws {
+    public func start(_ port: in_port_t = 8080, bindToLocalhost: Bool = false, forceIPv4: Bool = false, priority: DispatchQoS.QoSClass = DispatchQoS.QoSClass.background) throws {
         guard !self.operating else { return }
         stop()
         self.state = .starting
-        let address = forceIPv4 ? listenAddressIPv4 : listenAddressIPv6
-        self.socket = try Socket.tcpSocketForListen(port, forceIPv4, SOMAXCONN, address)
+        self.socket = try Socket.tcpSocketForListen(port, forceIPv4, SOMAXCONN, bindToLocalhost)
         DispatchQueue.global(qos: priority).async { [weak self] in
             guard let `self` = self else { return }
             guard self.operating else { return }
