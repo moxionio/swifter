@@ -19,11 +19,19 @@ import Foundation
             }
             var writeCounter = 0
             while writeCounter < readResult {
-                let writeResult = write(target, &buffer + writeCounter, readResult - writeCounter)
+                let writeResult = buffer.withUnsafeBytes { (ptr) -> Int in
+                  let start = ptr.baseAddress! + writeCounter
+                  let len = readResult - writeCounter
+                  #if os(Linux)
+                  return send(target, start, len, Int32(MSG_NOSIGNAL))
+                  #else
+                  return write(target, start, len)
+                  #endif
+                }
                 guard writeResult > 0 else {
                     return Int32(writeResult)
                 }
-                writeCounter = writeCounter + writeResult
+                writeCounter += writeResult
             }
         }
     }
